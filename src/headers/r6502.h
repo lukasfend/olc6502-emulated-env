@@ -6,6 +6,87 @@
 
 class Bus;
 
+/**
+ *  MOS 6502 CPU core emulator representing registers, flags, and execution state.
+ *
+ *  Exposes public CPU registers and status flags, a bus connection point, and a disassembly
+ *  helper. Provides internal addressing modes, opcode implementations, memory access,
+ *  and control flow methods used to simulate the CPU cycle behavior.
+ */
+
+/**
+ *  Connects the CPU to a memory/IO bus.
+ *  @param n Pointer to a Bus instance that the CPU will use for reads and writes.
+ */
+
+/**
+ *  Produce a disassembly map for a range of memory addresses.
+ *  Returns a mapping from each address in the range [nStart, nStop] to the disassembled
+ *  instruction string located at that address.
+ *  @param nStart Starting address (inclusive) for disassembly.
+ *  @param nStop  Ending address (inclusive) for disassembly.
+ *  @returns std::map<uint16_t, std::string> mapping addresses to disassembled instruction text.
+ */
+
+/**
+ *  Read a byte from the connected bus at the given address.
+ *  @param addr 16-bit memory address to read from.
+ *  @returns The byte value read from the bus.
+ */
+
+/**
+ *  Write a byte to the connected bus at the given address.
+ *  @param addr 16-bit memory address to write to.
+ *  @param data Byte value to write.
+ */
+
+/**
+ *  Retrieve the current value of a specified status flag.
+ *  @param flags The FLAGS6502 flag to query.
+ *  @returns `1` if the specified flag is set, `0` otherwise.
+ */
+
+/**
+ *  Set or clear a specified status flag.
+ *  @param flags The FLAGS6502 flag to modify.
+ *  @param value `true` to set the flag, `false` to clear it.
+ */
+
+/**
+ *  Fetch the next operand for the currently executing instruction.
+ *  Performs the operand fetch based on the current addressing mode and returns
+ *  the fetched byte.
+ *  @returns The fetched byte value.
+ */
+
+/**
+ *  Advance the CPU state by one clock cycle.
+ *  Executes micro-operations for the current instruction and updates internal
+ *  timing and state; may complete the current instruction when cycles reach zero.
+ */
+
+/**
+ *  Reset the CPU to its initial power-on state.
+ *  Initializes registers, flags, program counter, and internal timing to the
+ *  standard reset values expected for a 6502 core.
+ */
+
+/**
+ *  Handle a maskable interrupt request (IRQ).
+ *  Pushes processor state and vectors execution to the IRQ handler as defined by
+ *  the 6502 interrupt sequence.
+ */
+
+/**
+ *  Handle a non-maskable interrupt (NMI).
+ *  Pushes processor state and vectors execution to the NMI handler as defined by
+ *  the 6502 interrupt sequence.
+ */
+
+/**
+ *  Indicates whether the current instruction has finished executing.
+ *  @returns `true` if the current instruction has completed, `false` otherwise.
+ */
 class r6502
 {
 public:

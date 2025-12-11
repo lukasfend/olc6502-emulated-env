@@ -1,6 +1,13 @@
 #include "r6502.h"
 #include "Bus.h"
 
+/**
+ * @brief Initialize the 6502 CPU opcode lookup table.
+ *
+ * Populates the emulator's opcode dispatch table with entries that map each
+ * opcode to its mnemonic, operation implementation, addressing-mode resolver,
+ * and base cycle count.
+ */
 r6502::r6502()
 {
     using a = r6502;
@@ -265,21 +272,45 @@ r6502::r6502()
         };
 }
 
+/**
+ * @brief Destroy the r6502 CPU emulator instance and release any owned resources.
+ *
+ * Performs any necessary cleanup when an r6502 object is destroyed.
+ */
 r6502::~r6502()
 {
 }
 
+/**
+ * @brief Read a byte from the system bus at the given 16-bit address using CPU read mode.
+ *
+ * @param a 16-bit memory address to read from.
+ * @return uint8_t The byte value read from the bus at address `a`.
+ */
 uint8_t r6502::read(uint16_t a)
 {
 
     return bus->read(a, false);
 }
 
+/**
+ * @brief Write a byte to the connected bus at the specified address.
+ *
+ * @param a 16-bit address to write to.
+ * @param d Byte value to write.
+ */
 void r6502::write(uint16_t a, uint8_t d)
 {
     bus->write(a, d);
 }
 
+/**
+ * @brief Initialize CPU state and set the program counter from the reset vector.
+ *
+ * Reads the 16-bit reset vector at 0xFFFC/0xFFFD into the program counter, clears A, X, Y,
+ * sets the stack pointer to 0xFD, initializes the status register with the unused flag set,
+ * clears temporary addressing/fetch state, and sets the cycle counter to 8.
+ */
 void r6502::reset()
 {
 
@@ -302,6 +333,14 @@ void r6502::reset()
     cycles = 8;
 }
 
+/**
+ * @brief Handle a maskable IRQ (interrupt request) if interrupts are enabled.
+ *
+ * Pushes the current program counter and status onto the stack, sets the interrupt
+ * and system flags appropriately, loads the IRQ vector from 0xFFFE/0xFFFF into the
+ * program counter, and schedules the CPU for the IRQ service routine by setting
+ * the cycle count.
+ */
 void r6502::irq()
 {
 
@@ -328,6 +367,13 @@ void r6502::irq()
     }
 }
 
+/**
+ * @brief Trigger a non-maskable interrupt (NMI) on the CPU.
+ *
+ * Pushes the current program counter and status register onto the stack, sets the B flag to 0,
+ * the U (unused) flag to 1, and the I (interrupt disable) flag to 1, then loads the NMI vector
+ * from address 0xFFFA/0xFFFB into the program counter and sets the CPU cycle count to 8.
+ */
 void r6502::nmi()
 {
     write(0x0100 + stkp, (pc >> 8) & 0x00FF);
@@ -349,6 +395,15 @@ void r6502::nmi()
     cycles = 8;
 }
 
+/**
+ * @brief Advance the CPU by one clock cycle and execute the next instruction when ready.
+ *
+ * When the internal cycle counter reaches zero, this method fetches the next opcode
+ * from memory, updates the program counter and status, invokes the instruction's
+ * addressing mode and operation handlers, and adjusts the cycle counter based on
+ * the instruction's base and any additional cycles from addressing/operation.
+ * Always increments the internal clock counter and decrements the remaining cycle count.
+ */
 void r6502::clock()
 {
 
@@ -395,11 +450,26 @@ void r6502::clock()
     cycles--;
 }
 
+/**
+ * @brief Check whether a processor status flag is set.
+ *
+ * @param f The status flag to test (one of FLAGS6502).
+ * @return uint8_t `1` if the specified status flag is set, `0` otherwise.
+ */
 uint8_t r6502::GetFlag(FLAGS6502 f)
 {
     return ((status & f) > 0) ? 1 : 0;
 }
 
+/**
+ * @brief Set or clear a CPU status flag.
+ *
+ * Modifies the CPU internal status register by setting the specified flag when v is true
+ * or clearing it when v is false.
+ *
+ * @param f The status flag to modify (one of FLAGS6502).
+ * @param v True to set the flag, false to clear it.
+ */
 void r6502::SetFlag(FLAGS6502 f, bool v)
 {
     if (v)
@@ -408,18 +478,42 @@ void r6502::SetFlag(FLAGS6502 f, bool v)
         status &= ~f;
 }
 
+/**
+ * @brief Implied addressing mode that selects the accumulator as the operand.
+ *
+ * Sets the fetched operand to the accumulator register (A) for instructions
+ * that operate on the accumulator using implied addressing.
+ *
+ * @return uint8_t 0 indicating no additional clock cycles are required.
+ */
 uint8_t r6502::IMP()
 {
     fetched = a;
     return 0;
 }
 
+/**
+ * @brief Resolve immediate addressing mode by pointing to the next byte operand.
+ *
+ * Sets the absolute address to the current program counter and advances the program counter
+ * so the CPU can fetch the immediate operand.
+ *
+ * @return uint8_t 0 (no additional clock cycle required).
+ */
 uint8_t r6502::IMM()
 {
     addr_abs = pc++;
     return 0;
 }
 
+/**
+ * @brief Resolve zero-page addressing by reading the next byte and storing it in addr_abs.
+ *
+ * Reads a single byte from memory at the program counter, increments the program counter,
+ * and masks the result to the zero page (0x00FF) before storing it in addr_abs.
+ *
+ * @return uint8_t `0` — no additional CPU cycles required.
+ */
 uint8_t r6502::ZP0()
 {
     addr_abs = read(pc);
@@ -428,6 +522,15 @@ uint8_t r6502::ZP0()
     return 0;
 }
 
+/**
+ * @brief Resolve zero page addressing with X register offset.
+ *
+ * Sets the effective address to the zero-page location formed by adding the X register
+ * to the immediate zero-page operand and advances the program counter. The resulting
+ * address is masked to the zero page (0x00FF).
+ *
+ * @return uint8_t `0` when no additional CPU cycles are required.
+ */
 uint8_t r6502::ZPX()
 {
     addr_abs = (read(pc) + x);
@@ -436,6 +539,13 @@ uint8_t r6502::ZPX()
     return 0;
 }
 
+/**
+ * @brief Zero Page,Y addressing mode: fetches a zero-page base from the next byte, adds Y, and stores the wrapped 8-bit address.
+ *
+ * Reads the zero-page base operand at the program counter, increments PC, adds the Y register, and masks the result to 8 bits so the address wraps within the zero page (0x0000–0x00FF).
+ *
+ * @return uint8_t `0` indicating no additional clock cycles.
+ */
 uint8_t r6502::ZPY()
 {
     addr_abs = (read(pc) + y);
@@ -444,6 +554,15 @@ uint8_t r6502::ZPY()
     return 0;
 }
 
+/**
+ * @brief Read a relative branch offset from memory, sign-extend it, and advance the program counter.
+ *
+ * Reads the byte at the current program counter into the CPU's `addr_rel`, increments `pc` by one,
+ * and sign-extends the byte into a 16-bit offset stored in `addr_rel` (negative offsets have the high
+ * byte set to 0xFF).
+ *
+ * @return uint8_t Always returns 0.
+ */
 uint8_t r6502::REL()
 {
     addr_rel = read(pc);
@@ -453,6 +572,14 @@ uint8_t r6502::REL()
     return 0;
 }
 
+/**
+ * @brief Resolve the absolute addressing mode.
+ *
+ * Reads a 16-bit address from memory at the program counter, advances the program
+ * counter by two, and stores the resulting address in `addr_abs`.
+ *
+ * @return uint8_t `0` indicating no additional CPU cycle is required for this addressing mode.
+ */
 uint8_t r6502::ABS()
 {
     uint16_t lo = read(pc);
@@ -465,6 +592,15 @@ uint8_t r6502::ABS()
     return 0;
 }
 
+/**
+ * @brief Resolve the Absolute,X addressing mode.
+ *
+ * Reads a 16-bit base address from the program counter, adds the X register offset,
+ * and stores the resulting effective address in `addr_abs`. The program counter is
+ * advanced past the two address bytes.
+ *
+ * @return uint8_t `1` if adding X crossed a 0xFF->0x00 page boundary (indicating an extra cycle is required), `0` otherwise.
+ */
 uint8_t r6502::ABX()
 {
     uint16_t lo = read(pc);
@@ -481,6 +617,13 @@ uint8_t r6502::ABX()
         return 0;
 }
 
+/**
+ * @brief Compute an absolute address from the next two memory bytes, add the Y register, and detect page crossing.
+ *
+ * Sets r6502::addr_abs to the formed address and advances the program counter past the two operand bytes; reads those bytes from memory.
+ *
+ * @return uint8_t `1` if adding Y crosses a 256-byte page boundary, `0` otherwise.
+ */
 uint8_t r6502::ABY()
 {
     uint16_t lo = read(pc);
@@ -497,6 +640,15 @@ uint8_t r6502::ABY()
         return 0;
 }
 
+/**
+ * @brief Resolve the indirect addressing operand and store the effective address.
+ *
+ * Reads a 16-bit pointer from the program counter and loads the 16-bit effective
+ * address from that pointer into `addr_abs`. If the pointer's low byte is 0xFF,
+ * the high byte is fetched from the same page (emulating the 6502 page-wrapping bug).
+ *
+ * @return `0` (no additional cycles)
+ */
 uint8_t r6502::IND()
 {
     uint16_t ptr_lo = read(pc);
@@ -518,6 +670,15 @@ uint8_t r6502::IND()
     return 0;
 }
 
+/**
+ * @brief Resolve the indexed-indirect (IZX / (d, X)) addressing mode and store the effective address.
+ *
+ * Computes a 16-bit effective address by taking a zero-page base from the program counter,
+ * adding the X register (with zero-page wrap-around), reading the low/high bytes from zero page,
+ * and combining them into addr_abs.
+ *
+ * @return uint8_t Always returns 0 (no additional CPU cycles).
+ */
 uint8_t r6502::IZX()
 {
     uint16_t t = read(pc);
@@ -531,6 +692,12 @@ uint8_t r6502::IZX()
     return 0;
 }
 
+/**
+ * @brief Compute the effective address for the indirect-indexed (IZY) addressing mode and store it in addr_abs.
+ *
+ * Reads a zero-page pointer from memory at PC (increments PC), dereferences the pointer to form a 16-bit base address, adds the Y register, and updates addr_abs.
+ * @return uint8_t `1` if adding Y crosses a page boundary (requires an extra CPU cycle), `0` otherwise.
+ */
 uint8_t r6502::IZY()
 {
     uint16_t t = read(pc);
@@ -548,6 +715,15 @@ uint8_t r6502::IZY()
         return 0;
 }
 
+/**
+ * @brief Obtains the current instruction operand into the CPU's fetched field.
+ *
+ * Reads the operand from memory into the internal `fetched` field for the instruction
+ * currently referenced by `opcode`. For implied addressing modes the `fetched`
+ * value is left as preloaded and is not read from memory.
+ *
+ * @return uint8_t The operand value stored in `fetched`.
+ */
 uint8_t r6502::fetch()
 {
     if (!(lookup[opcode].addrmode == &r6502::IMP))
@@ -555,6 +731,17 @@ uint8_t r6502::fetch()
     return fetched;
 }
 
+/**
+ * @brief Adds the fetched operand and the current carry flag to the accumulator and stores the result in A.
+ *
+ * Updates the processor status flags according to the result:
+ * - Carry (C): set if the unsigned result is greater than 255.
+ * - Zero  (Z): set if the low 8 bits of the result are zero.
+ * - Overflow (V): set if signed overflow occurred.
+ * - Negative (N): set from bit 7 of the result.
+ *
+ * @return uint8_t `1` indicating this instruction may require an additional clock cycle. 
+ */
 uint8_t r6502::ADC()
 {
 
@@ -575,6 +762,15 @@ uint8_t r6502::ADC()
     return 1;
 }
 
+/**
+ * @brief Subtracts the fetched operand from the accumulator using the carry flag.
+ *
+ * Performs subtraction via two's-complement addition (inverts the fetched byte and adds it
+ * to the accumulator plus the carry flag), updates the C, Z, V, and N status flags, and
+ * stores the low 8 bits of the result in the accumulator.
+ *
+ * @return uint8_t `1` if the instruction may require an additional cycle, `0` otherwise.
+ */
 uint8_t r6502::SBC()
 {
     fetch();
@@ -590,6 +786,11 @@ uint8_t r6502::SBC()
     return 1;
 }
 
+/**
+ * @brief Performs a bitwise AND between the accumulator and the fetched operand, stores the result in the accumulator, and updates Zero and Negative flags.
+ *
+ * @return uint8_t 1 indicating this instruction contributes one additional cycle.
+ */
 uint8_t r6502::AND()
 {
     fetch();
@@ -599,6 +800,16 @@ uint8_t r6502::AND()
     return 1;
 }
 
+/**
+ * @brief Perform an arithmetic left shift on the accumulator or memory operand and update status flags.
+ *
+ * Shifts the fetched byte left by one bit, stores the low 8 bits back into the accumulator when using
+ * implied addressing or writes them to memory at addr_abs for other addressing modes. Updates the
+ * Carry flag with the bit shifted out, the Zero flag if the resulting byte is zero, and the Negative
+ * flag from bit 7 of the resulting byte.
+ *
+ * @return uint8_t Extra cycles required (always 0 for this implementation).
+ */
 uint8_t r6502::ASL()
 {
     fetch();
@@ -613,6 +824,15 @@ uint8_t r6502::ASL()
     return 0;
 }
 
+/**
+ * @brief Branch on carry clear.
+ *
+ * If the Carry flag is clear, adds the signed relative offset to the program counter and
+ * increments the CPU cycle count for the branch; an additional cycle is added if the branch
+ * crosses a page boundary.
+ *
+ * @return uint8_t 0
+ */
 uint8_t r6502::BCC()
 {
     if (GetFlag(C) == 0)
@@ -628,6 +848,15 @@ uint8_t r6502::BCC()
     return 0;
 }
 
+/**
+ * @brief Branches to a relative address if the carry flag is set.
+ *
+ * If the carry flag is set, advances the program counter by the instruction's
+ * relative offset and increments the cycle count for a taken branch. Adds an
+ * additional cycle if the branch crosses a page boundary.
+ *
+ * @return uint8_t Always returns 0.
+ */
 uint8_t r6502::BCS()
 {
     if (GetFlag(C) == 1)
@@ -643,6 +872,15 @@ uint8_t r6502::BCS()
     return 0;
 }
 
+/**
+ * @brief Branches to the relative address when the zero flag is set.
+ *
+ * If the Z flag is set, advances the program counter by the signed relative offset
+ * stored in addr_rel. Increments the CPU cycle count by 1 when the branch is taken
+ * and by an additional 1 if the branch crosses a page boundary.
+ *
+ * @return uint8_t Always returns 0.
+ */
 uint8_t r6502::BEQ()
 {
     if (GetFlag(Z) == 1)
@@ -658,6 +896,13 @@ uint8_t r6502::BEQ()
     return 0;
 }
 
+/**
+ * @brief Tests accumulator bits against the fetched operand and updates status flags.
+ *
+ * Performs a bitwise AND between the accumulator and the fetched value, sets the Zero flag if the result is zero, and copies bit 7 and bit 6 of the fetched value into the Negative and Overflow flags respectively.
+ *
+ * @return uint8_t Number of additional clock cycles required (always 0).
+ */
 uint8_t r6502::BIT()
 {
     fetch();
@@ -668,6 +913,15 @@ uint8_t r6502::BIT()
     return 0;
 }
 
+/**
+ * @brief Branch to a relative address if the Negative flag is set.
+ *
+ * If the Negative flag is set, updates the program counter to the target
+ * relative address and increments the CPU cycle count by 1. If the branch
+ * crosses a page boundary, increments the cycle count by an additional 1.
+ *
+ * @return 0
+ */
 uint8_t r6502::BMI()
 {
     if (GetFlag(N) == 1)
@@ -683,6 +937,14 @@ uint8_t r6502::BMI()
     return 0;
 }
 
+/**
+ * @brief Branches to the relative address if the zero flag is clear.
+ *
+ * If the zero flag is clear, updates the program counter to the computed relative target and increments the cycle count;
+ * an additional cycle is added if the branch crosses a page boundary.
+ *
+ * @return uint8_t Always returns 0.
+ */
 uint8_t r6502::BNE()
 {
     if (GetFlag(Z) == 0)
@@ -698,6 +960,16 @@ uint8_t r6502::BNE()
     return 0;
 }
 
+/**
+ * @brief Branches to a relative address if the Negative flag is clear.
+ *
+ * If the Negative flag is clear, advances the program counter by the
+ * signed relative offset and increments the internal cycle count by 1.
+ * If the branch crosses a page boundary, increments the cycle count by an
+ * additional 1.
+ *
+ * @return 0
+ */
 uint8_t r6502::BPL()
 {
     if (GetFlag(N) == 0)
@@ -713,6 +985,15 @@ uint8_t r6502::BPL()
     return 0;
 }
 
+/**
+ * @brief Execute the BRK (force interrupt) instruction.
+ *
+ * Pushes the program counter and status register onto the stack, sets the
+ * interrupt disable flag and the break flag while saving status, then loads
+ * the interrupt vector from 0xFFFE/0xFFFF into the program counter.
+ *
+ * @return uint8_t `0` — no extra cycles beyond the instruction's base cycles.
+ */
 uint8_t r6502::BRK()
 {
     pc++;
@@ -732,6 +1013,16 @@ uint8_t r6502::BRK()
     return 0;
 }
 
+/**
+ * @brief Branches to the relative address if the overflow flag is clear.
+ *
+ * If the V (overflow) flag is clear, advances the cycle count for the branch,
+ * computes the absolute target from the relative offset and updates the
+ * program counter. Adds an additional cycle if the branch crosses a page
+ * boundary.
+ *
+ * @return uint8_t Always returns 0.
+ */
 uint8_t r6502::BVC()
 {
     if (GetFlag(V) == 0)
@@ -747,6 +1038,16 @@ uint8_t r6502::BVC()
     return 0;
 }
 
+/**
+ * @brief Branches to a relative address when the overflow flag is set.
+ *
+ * If the overflow flag is set, advances the program counter by the signed
+ * relative offset, increments the cycle count by one for the taken branch
+ * and increments by one additional cycle if the branch crosses a page
+ * boundary.
+ *
+ * @return uint8_t Always returns 0.
+ */
 uint8_t r6502::BVS()
 {
     if (GetFlag(V) == 1)
@@ -762,30 +1063,67 @@ uint8_t r6502::BVS()
     return 0;
 }
 
+/**
+ * @brief Clears the carry flag.
+ *
+ * Clears the CPU carry status flag.
+ *
+ * @return uint8_t Always returns 0.
+ */
 uint8_t r6502::CLC()
 {
     SetFlag(C, false);
     return 0;
 }
 
+/**
+ * @brief Clear the decimal mode processor flag.
+ *
+ * @return uint8_t `0` (no additional cycles).
+ */
 uint8_t r6502::CLD()
 {
     SetFlag(D, false);
     return 0;
 }
 
+/**
+ * @brief Clears the Interrupt Disable flag to allow maskable interrupts.
+ *
+ * Clears the CPU status Interrupt Disable (I) flag so maskable IRQs can be serviced.
+ *
+ * @return uint8_t 0
+ */
 uint8_t r6502::CLI()
 {
     SetFlag(I, false);
     return 0;
 }
 
+/**
+ * @brief Clear the overflow (V) flag in the status register.
+ *
+ * Clears the CPU's overflow flag.
+ *
+ * @return uint8_t 0 — no additional cycles. 
+ */
 uint8_t r6502::CLV()
 {
     SetFlag(V, false);
     return 0;
 }
 
+/**
+ * @brief Compare the accumulator with the fetched operand and update processor flags.
+ *
+ * Performs A - operand (without storing the result) and updates the carry, zero,
+ * and negative flags to reflect the comparison:
+ * - Carry (C) set if A is greater than or equal to the operand.
+ * - Zero (Z) set if the low byte of the subtraction is zero (A equals operand).
+ * - Negative (N) set according to bit 7 of the subtraction result.
+ *
+ * @return uint8_t Number of additional cycles consumed by the instruction (always 1).
+ */
 uint8_t r6502::CMP()
 {
     fetch();
@@ -796,6 +1134,16 @@ uint8_t r6502::CMP()
     return 1;
 }
 
+/**
+ * @brief Compares the X register with the fetched operand and updates processor flags.
+ *
+ * Performs X - operand (using 8-bit semantics) and sets:
+ * - Carry (C) if X is greater than or equal to the operand.
+ * - Zero (Z) if the low 8 bits of the result are zero (X == operand).
+ * - Negative (N) if bit 7 of the 8-bit result is set.
+ *
+ * @return uint8_t 0 (no additional CPU cycle). 
+ */
 uint8_t r6502::CPX()
 {
     fetch();
@@ -806,6 +1154,15 @@ uint8_t r6502::CPX()
     return 0;
 }
 
+/**
+ * Compares the Y register with the fetched operand and updates CPU flags.
+ *
+ * Sets the Carry flag if Y is greater than or equal to the operand, the Zero
+ * flag if Y equals the operand, and the Negative flag from bit 7 of the result
+ * (Y - operand).
+ *
+ * @return uint8_t 0 indicating no additional clock cycles beyond the base. 
+ */
 uint8_t r6502::CPY()
 {
     fetch();
@@ -816,6 +1173,14 @@ uint8_t r6502::CPY()
     return 0;
 }
 
+/**
+ * @brief Decrements the value at the resolved effective address by one and updates flags.
+ *
+ * Decrements the byte located at the CPU's current absolute address (addr_abs), writes the low
+ * 8-bit result back to memory, and updates the Zero and Negative status flags based on the result.
+ *
+ * @return uint8_t Always returns 0 (no additional cycle penalty from this operation itself).
+ */
 uint8_t r6502::DEC()
 {
     fetch();
@@ -826,6 +1191,14 @@ uint8_t r6502::DEC()
     return 0;
 }
 
+/**
+ * @brief Decrement the X register and update processor flags.
+ *
+ * Decrements the X register by one, sets the zero flag if X becomes 0,
+ * and sets the negative flag if bit 7 of X is set.
+ *
+ * @return uint8_t Always returns 0.
+ */
 uint8_t r6502::DEX()
 {
     x--;
@@ -834,6 +1207,13 @@ uint8_t r6502::DEX()
     return 0;
 }
 
+/**
+ * @brief Decrements the Y register and updates processor flags.
+ *
+ * Decrements the Y register by one, sets the Zero flag if Y equals 0, and sets the Negative flag based on bit 7 of Y.
+ *
+ * @return uint8_t Always returns 0.
+ */
 uint8_t r6502::DEY()
 {
     y--;
@@ -842,6 +1222,11 @@ uint8_t r6502::DEY()
     return 0;
 }
 
+/**
+ * @brief Performs bitwise exclusive OR between the accumulator and the fetched operand, stores the result in the accumulator, and updates zero and negative flags.
+ *
+ * @return uint8_t `1` if the instruction requires an additional CPU cycle, `0` otherwise.
+ */
 uint8_t r6502::EOR()
 {
     fetch();
@@ -851,6 +1236,14 @@ uint8_t r6502::EOR()
     return 1;
 }
 
+/**
+ * @brief Increment the value in memory at the resolved address by one and update processor flags.
+ *
+ * Increments the byte at addr_abs, stores the low 8 bits back to memory, and updates the Zero and Negative flags
+ * based on the resulting 8-bit value.
+ *
+ * @return uint8_t `0` (no additional clock cycles).
+ */
 uint8_t r6502::INC()
 {
     fetch();
@@ -861,6 +1254,14 @@ uint8_t r6502::INC()
     return 0;
 }
 
+/**
+ * @brief Increment the X register by one and update processor flags.
+ *
+ * Increments register X, sets the Zero flag if X equals 0, and sets the Negative
+ * flag if bit 7 of X is 1.
+ *
+ * @return uint8_t Always returns 0.
+ */
 uint8_t r6502::INX()
 {
     x++;
@@ -869,6 +1270,14 @@ uint8_t r6502::INX()
     return 0;
 }
 
+/**
+ * @brief Increment the Y register by one and update processor flags.
+ *
+ * Increments the Y register, sets the Zero flag if Y equals 0, and sets the Negative
+ * flag based on the high bit of Y.
+ *
+ * @return uint8_t `0`
+ */
 uint8_t r6502::INY()
 {
     y++;
@@ -877,12 +1286,26 @@ uint8_t r6502::INY()
     return 0;
 }
 
+/**
+ * @brief Set the program counter to the resolved absolute address.
+ *
+ * Updates the CPU's program counter to the address previously resolved by the addressing mode.
+ *
+ * @return 0 No additional cycles are required.
+ */
 uint8_t r6502::JMP()
 {
     pc = addr_abs;
     return 0;
 }
 
+/**
+ * @brief Pushes the return address onto the stack and transfers execution to the subroutine target.
+ *
+ * The address pushed is the program counter minus one, stored as high byte then low byte on the CPU stack.
+ *
+ * @return uint8_t Always returns `0`.
+ */
 uint8_t r6502::JSR()
 {
     pc--;
@@ -896,6 +1319,14 @@ uint8_t r6502::JSR()
     return 0;
 }
 
+/**
+ * @brief Load the accumulator with the fetched operand and update status flags.
+ *
+ * Loads the fetched operand into the accumulator register `A`, sets the zero flag if
+ * `A` equals 0x00, and sets the negative flag if bit 7 of `A` is 1.
+ *
+ * @return uint8_t `1` if the instruction requires an additional cycle, `0` otherwise.
+ */
 uint8_t r6502::LDA()
 {
     fetch();
@@ -905,6 +1336,13 @@ uint8_t r6502::LDA()
     return 1;
 }
 
+/**
+ * @brief Load the X register from the fetched operand and update processor flags.
+ *
+ * Sets the Zero flag if X becomes 0x00 and the Negative flag according to bit 7 of X.
+ *
+ * @return uint8_t `1` indicating this instruction consumes an extra cycle. 
+ */
 uint8_t r6502::LDX()
 {
     fetch();
@@ -914,6 +1352,13 @@ uint8_t r6502::LDX()
     return 1;
 }
 
+/**
+ * @brief Load the fetched operand into the Y register and update status flags.
+ *
+ * Sets the Zero flag if Y equals 0x00 and the Negative flag if bit 7 of Y is set.
+ *
+ * @return uint8_t Always returns 1 to indicate this instruction requires one additional cycle.
+ */
 uint8_t r6502::LDY()
 {
     fetch();
@@ -923,6 +1368,16 @@ uint8_t r6502::LDY()
     return 1;
 }
 
+/**
+ * @brief Performs a logical shift right on the current operand and stores the result.
+ *
+ * Shifts the operand right by one bit, transfers the least-significant bit into the Carry flag,
+ * and updates the Zero and Negative (bit 7) flags based on the result. If the instruction uses
+ * implied addressing, the shifted result is stored in the accumulator; otherwise the result is
+ * written back to memory at the resolved address.
+ *
+ * @return uint8_t 0 (no additional cycles).
+ */
 uint8_t r6502::LSR()
 {
     fetch();
@@ -937,6 +1392,14 @@ uint8_t r6502::LSR()
     return 0;
 }
 
+/**
+ * @brief Execute the NOP (no operation) instruction and report extra cycle usage.
+ *
+ * For a standard NOP this performs no state changes; certain undocumented/multi-byte NOP opcodes
+ * require one additional cycle and are reported as such.
+ *
+ * @return uint8_t `1` if the current opcode is a multi-cycle NOP (one extra cycle), `0` otherwise.
+ */
 uint8_t r6502::NOP()
 {
 
@@ -954,6 +1417,14 @@ uint8_t r6502::NOP()
     return 0;
 }
 
+/**
+ * @brief Performs a bitwise OR between the accumulator and the fetched operand.
+ *
+ * Updates the accumulator with the result and sets the Zero and Negative flags
+ * based on the new accumulator value.
+ *
+ * @return uint8_t Value `1`, indicating this instruction reports one extra cycle. 
+ */
 uint8_t r6502::ORA()
 {
     fetch();
@@ -963,6 +1434,13 @@ uint8_t r6502::ORA()
     return 1;
 }
 
+/**
+ * @brief Pushes the accumulator onto the stack.
+ *
+ * Pushes the A register to the stack page (0x0100 + SP) and decrements the stack pointer.
+ *
+ * @return uint8_t `0`.
+ */
 uint8_t r6502::PHA()
 {
     write(0x0100 + stkp, a);
@@ -970,6 +1448,14 @@ uint8_t r6502::PHA()
     return 0;
 }
 
+/**
+ * @brief Pushes the processor status register onto the stack and updates stack/status state.
+ *
+ * The status byte written to the stack has the Break and Unused flags set; after pushing,
+ * the internal Break and Unused flags are cleared and the stack pointer is decremented.
+ *
+ * @return uint8_t Always 0.
+ */
 uint8_t r6502::PHP()
 {
     write(0x0100 + stkp, status | B | U);
@@ -979,6 +1465,14 @@ uint8_t r6502::PHP()
     return 0;
 }
 
+/**
+ * @brief Pulls a byte from the stack into the accumulator and updates flags.
+ *
+ * Increments the stack pointer, loads the pulled value into register A,
+ * and updates the Zero and Negative status flags based on the loaded value.
+ *
+ * @return uint8_t 0 (no additional cycles).
+ */
 uint8_t r6502::PLA()
 {
     stkp++;
@@ -988,6 +1482,14 @@ uint8_t r6502::PLA()
     return 0;
 }
 
+/**
+ * @brief Restores the processor status register from the stack.
+ *
+ * Pops a byte from the CPU stack into the status register and ensures the
+ * unused/always-set flag (U) is set.
+ *
+ * @return uint8_t Returns 0 to indicate no extra clock cycles. 
+ */
 uint8_t r6502::PLP()
 {
     stkp++;
@@ -996,6 +1498,15 @@ uint8_t r6502::PLP()
     return 0;
 }
 
+/**
+ * @brief Rotate the operand left through the carry flag and store the result.
+ *
+ * Rotates the operand left by one bit with the current Carry flag shifted into bit 0 and the former bit 7 shifted into Carry.
+ * Updates the Carry, Zero, and Negative flags to reflect the result.
+ * When the implied addressing mode is used, the rotated result is written to the accumulator; otherwise it is written to the resolved memory address.
+ *
+ * @return uint8_t 0 (no additional cycles).
+ */
 uint8_t r6502::ROL()
 {
     fetch();
@@ -1010,6 +1521,14 @@ uint8_t r6502::ROL()
     return 0;
 }
 
+/**
+ * @brief Rotate right the fetched operand through the carry and store the result.
+ *
+ * Performs a right rotate through the carry flag on the current operand, updates the Carry, Zero, and Negative flags,
+ * and writes the rotated result to the accumulator for implied addressing or to memory for other addressing modes.
+ *
+ * @return uint8_t `0` (operation-specific extra-cycle indicator; always 0 for this instruction).
+ */
 uint8_t r6502::ROR()
 {
     fetch();
@@ -1024,6 +1543,15 @@ uint8_t r6502::ROR()
     return 0;
 }
 
+/**
+ * @brief Restore processor status and program counter from the stack after an interrupt.
+ *
+ * Restores the status register and program counter from the CPU stack, clears the
+ * Break (B) and Unused (U) flags in the restored status, and advances the stack pointer
+ * to reflect the popped bytes.
+ *
+ * @return uint8_t Always returns 0.
+ */
 uint8_t r6502::RTI()
 {
     stkp++;
@@ -1038,6 +1566,14 @@ uint8_t r6502::RTI()
     return 0;
 }
 
+/**
+ * @brief Restore the return address from the stack and resume execution at the next instruction.
+ *
+ * Pops a 16-bit return address from the CPU stack into the program counter and advances the
+ * program counter to the instruction following the original call (JSR).
+ *
+ * @return uint8_t Always 0.
+ */
 uint8_t r6502::RTS()
 {
     stkp++;
@@ -1049,42 +1585,93 @@ uint8_t r6502::RTS()
     return 0;
 }
 
+/**
+ * @brief Set the processor Carry flag.
+ *
+ * Sets the processor Carry (C) status flag to true.
+ *
+ * @return uint8_t 0
+ */
 uint8_t r6502::SEC()
 {
     SetFlag(C, true);
     return 0;
 }
 
+/**
+ * @brief Enable decimal (BCD) arithmetic mode by setting the Decimal flag.
+ *
+ * Sets the processor status Decimal flag so subsequent arithmetic operations use BCD behavior.
+ *
+ * @return uint8_t `0` (no additional cycles).
+ */
 uint8_t r6502::SED()
 {
     SetFlag(D, true);
     return 0;
 }
 
+/**
+ * @brief Set the processor interrupt disable flag.
+ *
+ * Sets the I (interrupt disable) flag in the status register, preventing IRQs from being serviced.
+ *
+ * @return uint8_t Always 0.
+ */
 uint8_t r6502::SEI()
 {
     SetFlag(I, true);
     return 0;
 }
 
+/**
+ * @brief Store the accumulator into memory using the previously resolved address.
+ *
+ * Writes the CPU accumulator register (A) to the resolved address stored in `addr_abs`.
+ *
+ * @return uint8_t `0` indicating no additional clock cycles. 
+ */
 uint8_t r6502::STA()
 {
     write(addr_abs, a);
     return 0;
 }
 
+/**
+ * @brief Store the X register to memory at the computed effective address.
+ *
+ * Writes the value of the X register to the CPU bus at addr_abs.
+ *
+ * @return uint8_t 0 — indicates no additional cycles are required.
+ */
 uint8_t r6502::STX()
 {
     write(addr_abs, x);
     return 0;
 }
 
+/**
+ * @brief Store the Y register to the effective memory address.
+ *
+ * Writes the current value of the Y register into memory at the previously
+ * resolved effective address (addr_abs).
+ *
+ * @return uint8_t 0 (no additional cycles).
+ */
 uint8_t r6502::STY()
 {
     write(addr_abs, y);
     return 0;
 }
 
+/**
+ * @brief Transfer the accumulator into the X register and update status flags.
+ *
+ * Sets X to the current value of A and updates the Zero and Negative flags
+ * based on the new X value.
+ *
+ * @return uint8_t 0 (no additional cycles).
+ */
 uint8_t r6502::TAX()
 {
     x = a;
@@ -1093,6 +1680,13 @@ uint8_t r6502::TAX()
     return 0;
 }
 
+/**
+ * @brief Transfer the accumulator into the Y register and update flags.
+ *
+ * Updates the Zero flag if Y is zero and the Negative flag from Y's bit 7.
+ *
+ * @return uint8_t `0` (no additional clock cycles).
+ */
 uint8_t r6502::TAY()
 {
     y = a;
@@ -1101,6 +1695,13 @@ uint8_t r6502::TAY()
     return 0;
 }
 
+/**
+ * @brief Transfer the stack pointer into the X register and update processor flags.
+ *
+ * Sets the Zero flag if X becomes 0x00 and the Negative flag based on bit 7 of X.
+ *
+ * @return uint8_t 0 — no additional cycles. 
+ */
 uint8_t r6502::TSX()
 {
     x = stkp;
@@ -1109,6 +1710,14 @@ uint8_t r6502::TSX()
     return 0;
 }
 
+/**
+ * @brief Transfer the X register into the accumulator and update flags.
+ *
+ * Sets the accumulator (A) to the value of the X register and updates the
+ * zero and negative status flags based on the new accumulator value.
+ *
+ * @return uint8_t 0 indicating no additional CPU cycles required.
+ */
 uint8_t r6502::TXA()
 {
     a = x;
@@ -1117,12 +1726,27 @@ uint8_t r6502::TXA()
     return 0;
 }
 
+/**
+ * @brief Transfer the X register value into the stack pointer.
+ *
+ * The X register is copied to the CPU stack pointer (STKP). This operation does not modify processor status flags.
+ *
+ * @return uint8_t `0`
+ */
 uint8_t r6502::TXS()
 {
     stkp = x;
     return 0;
 }
 
+/**
+ * @brief Transfer the Y register into the accumulator and update processor flags.
+ *
+ * Copies the value of the Y register into A, sets the Zero flag if A equals 0x00,
+ * and sets the Negative flag based on the high bit of A.
+ *
+ * @return uint8_t Always returns 0 to indicate no additional cycle penalty.
+ */
 uint8_t r6502::TYA()
 {
     a = y;
@@ -1131,16 +1755,41 @@ uint8_t r6502::TYA()
     return 0;
 }
 
+/**
+ * @brief Handler for undefined or unimplemented 6502 instructions.
+ *
+ * Acts as a placeholder for opcodes that have no implemented behavior.
+ *
+ * @return uint8_t Number of additional clock cycles consumed (always 0).
+ */
 uint8_t r6502::XXX()
 {
     return 0;
 }
 
+/**
+ * @brief Indicates whether the CPU has finished the current instruction.
+ *
+ * @return `true` if the pending cycle count is zero, `false` otherwise.
+ */
 bool r6502::complete()
 {
     return cycles == 0;
 }
 
+/**
+ * Produce a textual disassembly for the memory range between two addresses.
+ *
+ * Reads instruction bytes from the connected Bus and formats each instruction
+ * into a human-readable line containing the address, mnemonic, operand bytes,
+ * and an addressing-mode tag.
+ *
+ * @param nStart Starting address (inclusive) of the range to disassemble.
+ * @param nStop  Ending address (inclusive) of the range to disassemble.
+ * @return std::map<uint16_t, std::string> Map from instruction address to the
+ *         formatted disassembly line (address, mnemonic, operands, and
+ *         addressing-mode annotation).
+ */
 std::map<uint16_t, std::string> r6502::disassemble(uint16_t nStart, uint16_t nStop)
 {
     uint32_t addr = nStart;
